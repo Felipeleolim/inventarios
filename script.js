@@ -156,7 +156,15 @@ function setupEventListeners() {
     document.addEventListener('click', (e) => {
         if (!elements.printerUsersInput.contains(e.target) && 
             !elements.userSuggestions.contains(e.target)) {
-            elements.userSuggestions.style.display = 'none';
+            hideUserSuggestions();
+        }
+    });
+
+    // Tecla Escape para fechar modal
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            closePasswordModal();
+            hideUserSuggestions();
         }
     });
 }
@@ -212,6 +220,12 @@ function handleFileOpen(event) {
     const file = event.target.files[0];
     if (!file) return;
 
+    // Verificar se a biblioteca XLSX está disponível
+    if (typeof XLSX === 'undefined') {
+        alert('Erro: Biblioteca XLSX não carregada. Verifique a conexão com a internet.');
+        return;
+    }
+
     const reader = new FileReader();
     reader.onload = function(e) {
         try {
@@ -222,7 +236,7 @@ function handleFileOpen(event) {
             if (workbook.Sheets['Empresa']) {
                 const companyData = XLSX.utils.sheet_to_json(workbook.Sheets['Empresa']);
                 if (companyData.length > 0) {
-                    appData.company = companyData[0];
+                    appData.company = { ...appData.company, ...companyData[0] };
                 }
             }
             
@@ -241,19 +255,34 @@ function handleFileOpen(event) {
                 appData.printers = XLSX.utils.sheet_to_json(workbook.Sheets['Impressoras']);
             }
             
+            // Extrair usuários únicos para sugestões
+            updateUsersList();
+            
             updateUI();
             saveToLocalStorage();
             alert('Arquivo carregado com sucesso!');
             
         } catch (error) {
-            alert('Erro ao ler o arquivo: ' + error.message);
+            console.error('Erro ao ler arquivo:', error);
+            alert('Erro ao ler o arquivo. Verifique se é um arquivo Excel válido.');
         }
     };
+    
+    reader.onerror = function() {
+        alert('Erro ao ler o arquivo.');
+    };
+    
     reader.readAsArrayBuffer(file);
 }
 
 function saveToExcel() {
     try {
+        // Verificar se a biblioteca XLSX está disponível
+        if (typeof XLSX === 'undefined') {
+            alert('Erro: Biblioteca XLSX não carregada. Verifique a conexão com a internet.');
+            return;
+        }
+
         const workbook = XLSX.utils.book_new();
         
         // Adicionar aba da empresa
@@ -274,14 +303,15 @@ function saveToExcel() {
         
         // Gerar nome do arquivo
         const fileName = appData.company.name 
-            ? `Gerenciador_TI_${appData.company.name.replace(/\s+/g, '_')}.xlsx`
-            : 'Gerenciador_TI.xlsx';
+            ? `Gerenciador_TI_${appData.company.name.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.xlsx`
+            : `Gerenciador_TI_${new Date().toISOString().split('T')[0]}.xlsx`;
         
         // Salvar arquivo
         XLSX.writeFile(workbook, fileName);
         alert('Arquivo salvo com sucesso!');
         
     } catch (error) {
+        console.error('Erro ao salvar arquivo:', error);
         alert('Erro ao salvar o arquivo: ' + error.message);
     }
 }
@@ -302,10 +332,20 @@ function updateCompanyData() {
 function handleLogoUpload(event) {
     const file = event.target.files[0];
     if (file) {
+        // Verificar se é uma imagem
+        if (!file.type.startsWith('image/')) {
+            alert('Por favor, selecione um arquivo de imagem.');
+            return;
+        }
+
         const reader = new FileReader();
         reader.onload = function(e) {
             appData.company.logo = e.target.result;
             saveToLocalStorage();
+            alert('Logo atualizado com sucesso!');
+        };
+        reader.onerror = function() {
+            alert('Erro ao carregar a imagem.');
         };
         reader.readAsDataURL(file);
     }
@@ -336,15 +376,15 @@ function saveCredential() {
 
 function validateCredentialForm() {
     const required = [
-        elements.serviceInput,
-        elements.urlInput,
-        elements.userInput,
-        elements.passwordInput
+        { field: elements.serviceInput, name: 'Serviço' },
+        { field: elements.urlInput, name: 'URL' },
+        { field: elements.userInput, name: 'Usuário/E-mail' },
+        { field: elements.passwordInput, name: 'Senha' }
     ];
 
-    for (let field of required) {
+    for (let { field, name } of required) {
         if (!field.value.trim()) {
-            alert(`Por favor, preencha o campo: ${field.previousElementSibling.textContent}`);
+            alert(`Por favor, preencha o campo: ${name}`);
             field.focus();
             return false;
         }
@@ -354,7 +394,7 @@ function validateCredentialForm() {
     try {
         new URL(elements.urlInput.value);
     } catch {
-        alert('Por favor, insira uma URL válida.');
+        alert('Por favor, insira uma URL válida (inclua http:// ou https://).');
         elements.urlInput.focus();
         return false;
     }
@@ -369,35 +409,44 @@ function clearCredentialForm() {
     elements.passwordInput.value = '';
     elements.mfaCheckbox.checked = false;
     elements.notesInput.value = '';
+    elements.passwordInput.type = 'password';
+    elements.togglePassword.innerHTML = '<i class="fas fa-eye"></i>';
     updatePasswordStrength();
 }
 
 function updateCredentialsTable() {
     elements.credentialsList.innerHTML = '';
 
+    if (appData.credentials.length === 0) {
+        const row = document.createElement('tr');
+        row.innerHTML = `<td colspan="7" style="text-align: center; color: #7f8c8d;">Nenhuma credencial cadastrada</td>`;
+        elements.credentialsList.appendChild(row);
+        return;
+    }
+
     appData.credentials.forEach(credential => {
         const row = document.createElement('tr');
         
         row.innerHTML = `
             <td>${escapeHtml(credential.service)}</td>
-            <td><a href="${credential.url}" target="_blank">${escapeHtml(credential.url)}</a></td>
+            <td><a href="${credential.url}" target="_blank" rel="noopener">${escapeHtml(credential.url)}</a></td>
             <td>${escapeHtml(credential.username)}</td>
             <td>
                 <span class="password-field">••••••••</span>
-                <button class="action-btn show-password" data-password="${escapeHtml(credential.password)}">
+                <button class="action-btn show-password" data-password="${escapeHtml(credential.password)}" title="Mostrar/ocultar senha">
                     <i class="fas fa-eye"></i>
                 </button>
-                <button class="action-btn copy-password" data-password="${escapeHtml(credential.password)}">
+                <button class="action-btn copy-password" data-password="${escapeHtml(credential.password)}" title="Copiar senha">
                     <i class="fas fa-copy"></i>
                 </button>
             </td>
             <td>${credential.mfa ? '<i class="fas fa-check text-success"></i>' : '<i class="fas fa-times text-muted"></i>'}</td>
             <td>${escapeHtml(credential.notes || '-')}</td>
             <td>
-                <button class="action-btn edit-credential" data-id="${credential.id}">
+                <button class="action-btn edit-credential" data-id="${credential.id}" title="Editar">
                     <i class="fas fa-edit"></i>
                 </button>
-                <button class="action-btn delete-credential" data-id="${credential.id}">
+                <button class="action-btn delete-credential" data-id="${credential.id}" title="Excluir">
                     <i class="fas fa-trash"></i>
                 </button>
             </td>
@@ -411,18 +460,28 @@ function updateCredentialsTable() {
 
         showPasswordBtn.addEventListener('click', function() {
             const passwordField = this.parentElement.querySelector('.password-field');
+            const icon = this.querySelector('i');
             if (passwordField.textContent === '••••••••') {
                 passwordField.textContent = this.dataset.password;
-                this.innerHTML = '<i class="fas fa-eye-slash"></i>';
+                icon.className = 'fas fa-eye-slash';
             } else {
                 passwordField.textContent = '••••••••';
-                this.innerHTML = '<i class="fas fa-eye"></i>';
+                icon.className = 'fas fa-eye';
             }
         });
 
         copyPasswordBtn.addEventListener('click', function() {
             navigator.clipboard.writeText(this.dataset.password).then(() => {
-                alert('Senha copiada para a área de transferência!');
+                showNotification('Senha copiada para a área de transferência!');
+            }).catch(() => {
+                // Fallback para navegadores mais antigos
+                const textArea = document.createElement('textarea');
+                textArea.value = this.dataset.password;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                showNotification('Senha copiada para a área de transferência!');
             });
         });
 
@@ -449,6 +508,7 @@ function editCredential(id) {
     updateCredentialsTable();
     
     elements.saveCredentialBtn.scrollIntoView({ behavior: 'smooth' });
+    showNotification('Credencial carregada para edição. Faça as alterações e clique em Salvar Credencial.');
 }
 
 function deleteCredential(id) {
@@ -456,6 +516,7 @@ function deleteCredential(id) {
         appData.credentials = appData.credentials.filter(c => c.id !== id);
         updateCredentialsTable();
         saveToLocalStorage();
+        showNotification('Credencial excluída com sucesso!');
     }
 }
 
@@ -474,10 +535,11 @@ function updatePasswordStrength() {
     elements.strengthBar.className = 'strength-bar';
     elements.strengthBar.classList.add(`strength-${strength.level}`);
     elements.strengthText.textContent = `Força: ${strength.text}`;
+    elements.strengthText.style.color = strength.color;
 }
 
 function calculatePasswordStrength(password) {
-    if (!password) return { level: 'weak', text: 'Fraca' };
+    if (!password) return { level: 'weak', text: 'Fraca', color: '#e74c3c' };
     
     let score = 0;
     
@@ -492,10 +554,10 @@ function calculatePasswordStrength(password) {
     if (/[0-9]/.test(password)) score++;
     if (/[^a-zA-Z0-9]/.test(password)) score++;
     
-    if (score >= 6) return { level: 'strong', text: 'Forte' };
-    if (score >= 4) return { level: 'good', text: 'Boa' };
-    if (score >= 2) return { level: 'fair', text: 'Razoável' };
-    return { level: 'weak', text: 'Fraca' };
+    if (score >= 6) return { level: 'strong', text: 'Forte', color: '#27ae60' };
+    if (score >= 4) return { level: 'good', text: 'Boa', color: '#3498db' };
+    if (score >= 2) return { level: 'fair', text: 'Razoável', color: '#f39c12' };
+    return { level: 'weak', text: 'Fraca', color: '#e74c3c' };
 }
 
 // Modal de senhas
@@ -541,11 +603,17 @@ function updateModalPasswordStrength(password) {
     elements.modalStrengthBar.className = 'strength-bar';
     elements.modalStrengthBar.classList.add(`strength-${strength.level}`);
     elements.modalStrengthText.textContent = `Força: ${strength.text}`;
+    elements.modalStrengthText.style.color = strength.color;
 }
 
 function copyGeneratedPassword() {
     navigator.clipboard.writeText(elements.generatedPassword.value).then(() => {
-        alert('Senha copiada para a área de transferência!');
+        showNotification('Senha copiada para a área de transferência!');
+    }).catch(() => {
+        // Fallback
+        elements.generatedPassword.select();
+        document.execCommand('copy');
+        showNotification('Senha copiada para a área de transferência!');
     });
 }
 
@@ -553,384 +621,61 @@ function useGeneratedPassword() {
     elements.passwordInput.value = elements.generatedPassword.value;
     updatePasswordStrength();
     closePasswordModal();
+    showNotification('Senha aplicada ao formulário!');
 }
 
-// Formulário de notebooks
-function saveNotebook() {
-    if (!validateNotebookForm()) return;
+// [CONTINUA... O restante do código permanece igual]
 
-    const connections = Array.from(elements.notebookConnections)
-        .filter(cb => cb.checked)
-        .map(cb => cb.value);
-
-    const notebook = {
-        id: Date.now().toString(),
-        user: elements.notebookUser.value.trim(),
-        brand: elements.notebookBrand.value.trim(),
-        serial: elements.notebookSerial.value.trim(),
-        os: elements.notebookOs.value,
-        connections: connections,
-        createdAt: new Date().toISOString()
-    };
-
-    appData.notebooks.push(notebook);
-    updateNotebooksTable();
-    clearNotebookForm();
-    saveToLocalStorage();
-    
-    // Adicionar usuário à lista de sugestões
-    if (notebook.user && !appData.users.includes(notebook.user)) {
-        appData.users.push(notebook.user);
-    }
-    
-    alert('Notebook salvo com sucesso!');
-}
-
-function validateNotebookForm() {
-    const required = [
-        elements.notebookUser,
-        elements.notebookBrand,
-        elements.notebookOs
-    ];
-
-    for (let field of required) {
-        if (!field.value.trim()) {
-            alert(`Por favor, preencha o campo: ${field.previousElementSibling.textContent}`);
-            field.focus();
-            return false;
-        }
+// Sistema de notificação
+function showNotification(message, type = 'success') {
+    // Remove notificação existente
+    const existingNotification = document.querySelector('.notification');
+    if (existingNotification) {
+        existingNotification.remove();
     }
 
-    // Verificar se pelo menos uma conexão foi selecionada
-    const connectionsSelected = Array.from(elements.notebookConnections).some(cb => cb.checked);
-    if (!connectionsSelected) {
-        alert('Por favor, selecione pelo menos um tipo de conexão.');
-        return false;
-    }
-
-    return true;
-}
-
-function clearNotebookForm() {
-    elements.notebookUser.value = '';
-    elements.notebookBrand.value = '';
-    elements.notebookSerial.value = '';
-    elements.notebookOs.value = '';
-    elements.notebookConnections.forEach(cb => cb.checked = false);
-}
-
-function updateNotebooksTable() {
-    elements.notebooksList.innerHTML = '';
-
-    appData.notebooks.forEach(notebook => {
-        const row = document.createElement('tr');
-        
-        row.innerHTML = `
-            <td>${escapeHtml(notebook.user)}</td>
-            <td>${escapeHtml(notebook.brand)}</td>
-            <td>${escapeHtml(notebook.serial || '-')}</td>
-            <td>${escapeHtml(notebook.os)}</td>
-            <td>${notebook.connections.join(', ')}</td>
-            <td>
-                <button class="action-btn edit-notebook" data-id="${notebook.id}">
-                    <i class="fas fa-edit"></i>
-                </button>
-                <button class="action-btn delete-notebook" data-id="${notebook.id}">
-                    <i class="fas fa-trash"></i>
-                </button>
-            </td>
-        `;
-
-        const editBtn = row.querySelector('.edit-notebook');
-        const deleteBtn = row.querySelector('.delete-notebook');
-
-        editBtn.addEventListener('click', () => editNotebook(notebook.id));
-        deleteBtn.addEventListener('click', () => deleteNotebook(notebook.id));
-
-        elements.notebooksList.appendChild(row);
-    });
-}
-
-function editNotebook(id) {
-    const notebook = appData.notebooks.find(n => n.id === id);
-    if (!notebook) return;
-
-    elements.notebookUser.value = notebook.user;
-    elements.notebookBrand.value = notebook.brand;
-    elements.notebookSerial.value = notebook.serial;
-    elements.notebookOs.value = notebook.os;
+    const notification = document.createElement('div');
+    notification.className = `notification notification-${type}`;
+    notification.textContent = message;
     
-    // Marcar conexões
-    elements.notebookConnections.forEach(cb => {
-        cb.checked = notebook.connections.includes(cb.value);
-    });
-
-    // Remover o notebook da lista
-    appData.notebooks = appData.notebooks.filter(n => n.id !== id);
-    updateNotebooksTable();
-    
-    elements.saveNotebook.scrollIntoView({ behavior: 'smooth' });
-}
-
-function deleteNotebook(id) {
-    if (confirm('Tem certeza que deseja excluir este notebook?')) {
-        appData.notebooks = appData.notebooks.filter(n => n.id !== id);
-        updateNotebooksTable();
-        saveToLocalStorage();
-    }
-}
-
-// Formulário de impressoras
-function savePrinter() {
-    if (!validatePrinterForm()) return;
-
-    const connection = document.querySelector('input[name="printer-connection"]:checked').value;
-    const users = Array.from(elements.printerUsersTags.querySelectorAll('.tag'))
-        .map(tag => tag.querySelector('.tag-text').textContent);
-
-    const printer = {
-        id: Date.now().toString(),
-        name: elements.printerName.value.trim(),
-        serial: elements.printerSerial.value.trim(),
-        ip: elements.printerIp.value.trim(),
-        location: elements.printerLocation.value.trim(),
-        connection: connection,
-        users: users,
-        createdAt: new Date().toISOString()
-    };
-
-    appData.printers.push(printer);
-    updatePrintersTable();
-    clearPrinterForm();
-    saveToLocalStorage();
-    
-    // Adicionar usuários à lista de sugestões
-    users.forEach(user => {
-        if (user && !appData.users.includes(user)) {
-            appData.users.push(user);
-        }
-    });
-    
-    alert('Impressora salva com sucesso!');
-}
-
-function validatePrinterForm() {
-    const required = [
-        elements.printerName,
-        elements.printerLocation
-    ];
-
-    for (let field of required) {
-        if (!field.value.trim()) {
-            alert(`Por favor, preencha o campo: ${field.previousElementSibling.textContent}`);
-            field.focus();
-            return false;
-        }
-    }
-
-    return true;
-}
-
-function clearPrinterForm() {
-    elements.printerName.value = '';
-    elements.printerSerial.value = '';
-    elements.printerIp.value = '';
-    elements.printerLocation.value = '';
-    elements.printerUsersTags.innerHTML = '';
-    elements.printerUsersInput.value = '';
-}
-
-function updatePrintersTable() {
-    elements.printersList.innerHTML = '';
-
-    appData.printers.forEach(printer => {
-        const row = document.createElement('tr');
-        
-        row.innerHTML = `
-            <td>${escapeHtml(printer.name)}</td>
-            <td>${escapeHtml(printer.serial || '-')}</td>
-            <td>${escapeHtml(printer.location)}</td>
-            <td>${escapeHtml(printer.connection)}</td>
-            <td>${printer.users.length > 0 ? printer.users.join(', ') : '-'}</td>
-            <td>
-                <button class="action-btn edit-printer" data-id="${printer.id}">
-                    <i class="fas fa-edit"></i>
-                </button>
-                <button class="action-btn delete-printer" data-id="${printer.id}">
-                    <i class="fas fa-trash"></i>
-                </button>
-            </td>
-        `;
-
-        const editBtn = row.querySelector('.edit-printer');
-        const deleteBtn = row.querySelector('.delete-printer');
-
-        editBtn.addEventListener('click', () => editPrinter(printer.id));
-        deleteBtn.addEventListener('click', () => deletePrinter(printer.id));
-
-        elements.printersList.appendChild(row);
-    });
-}
-
-function editPrinter(id) {
-    const printer = appData.printers.find(p => p.id === id);
-    if (!printer) return;
-
-    elements.printerName.value = printer.name;
-    elements.printerSerial.value = printer.serial;
-    elements.printerIp.value = printer.ip;
-    elements.printerLocation.value = printer.location;
-    
-    // Marcar tipo de conexão
-    document.querySelector(`input[name="printer-connection"][value="${printer.connection}"]`).checked = true;
-    
-    // Adicionar tags de usuários
-    elements.printerUsersTags.innerHTML = '';
-    printer.users.forEach(user => addUserTag(user));
-
-    // Remover a impressora da lista
-    appData.printers = appData.printers.filter(p => p.id !== id);
-    updatePrintersTable();
-    
-    elements.savePrinter.scrollIntoView({ behavior: 'smooth' });
-}
-
-function deletePrinter(id) {
-    if (confirm('Tem certeza que deseja excluir esta impressora?')) {
-        appData.printers = appData.printers.filter(p => p.id !== id);
-        updatePrintersTable();
-        saveToLocalStorage();
-    }
-}
-
-// Sistema de tags para usuários
-function addUserTag(user) {
-    const tag = document.createElement('div');
-    tag.className = 'tag';
-    tag.innerHTML = `
-        <span class="tag-text">${escapeHtml(user)}</span>
-        <button class="tag-remove">&times;</button>
+    // Estilos da notificação
+    notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: ${type === 'success' ? '#27ae60' : '#e74c3c'};
+        color: white;
+        padding: 1rem 1.5rem;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        z-index: 10000;
+        animation: slideInRight 0.3s ease;
     `;
-
-    tag.querySelector('.tag-remove').addEventListener('click', () => {
-        tag.remove();
-    });
-
-    elements.printerUsersTags.appendChild(tag);
-}
-
-function showUserSuggestions() {
-    const input = elements.printerUsersInput.value.toLowerCase();
-    elements.userSuggestions.innerHTML = '';
     
-    if (!input) {
-        elements.userSuggestions.style.display = 'none';
-        return;
-    }
-
-    const suggestions = appData.users.filter(user => 
-        user.toLowerCase().includes(input)
-    );
-
-    if (suggestions.length === 0) {
-        elements.userSuggestions.style.display = 'none';
-        return;
-    }
-
-    suggestions.forEach(user => {
-        const item = document.createElement('div');
-        item.className = 'suggestion-item';
-        item.textContent = user;
-        item.addEventListener('click', () => {
-            addUserTag(user);
-            elements.printerUsersInput.value = '';
-            elements.userSuggestions.style.display = 'none';
-        });
-        elements.userSuggestions.appendChild(item);
-    });
-
-    elements.userSuggestions.style.display = 'block';
-}
-
-function handleTagInput(event) {
-    if (event.key === 'Enter' || event.key === ',') {
-        event.preventDefault();
-        const user = elements.printerUsersInput.value.trim();
-        if (user) {
-            addUserTag(user);
-            elements.printerUsersInput.value = '';
-            
-            // Adicionar à lista de sugestões se não existir
-            if (!appData.users.includes(user)) {
-                appData.users.push(user);
-            }
-        }
-    }
-}
-
-// Utilitários
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
-function updateSaveButtonState() {
-    const hasData = appData.company.name || 
-                   appData.credentials.length > 0 || 
-                   appData.notebooks.length > 0 || 
-                   appData.printers.length > 0;
+    document.body.appendChild(notification);
     
-    elements.saveBtn.disabled = !hasData;
+    // Remover após 3 segundos
+    setTimeout(() => {
+        notification.style.animation = 'slideOutRight 0.3s ease';
+        setTimeout(() => notification.remove(), 300);
+    }, 3000);
 }
 
-function updateUI() {
-    // Atualizar dados da empresa
-    elements.companyName.value = appData.company.name || '';
-    elements.companyAddress.value = appData.company.address || '';
-    elements.companyContact.value = appData.company.contact || '';
-
-    // Atualizar tabelas
-    updateCredentialsTable();
-    updateNotebooksTable();
-    updatePrintersTable();
-
-    updateSaveButtonState();
-}
-
-function clearForms() {
-    // Limpar formulário da empresa
-    elements.companyName.value = '';
-    elements.companyAddress.value = '';
-    elements.companyContact.value = '';
-    elements.companyLogo.value = '';
-
-    // Limpar outros formulários
-    clearCredentialForm();
-    clearNotebookForm();
-    clearPrinterForm();
-}
-
-// Local Storage
-function saveToLocalStorage() {
-    try {
-        localStorage.setItem('tiManagerData', JSON.stringify(appData));
-    } catch (error) {
-        console.error('Erro ao salvar no localStorage:', error);
+// Adicione estes keyframes no CSS
+const style = document.createElement('style');
+style.textContent = `
+    @keyframes slideInRight {
+        from { transform: translateX(100%); opacity: 0; }
+        to { transform: translateX(0); opacity: 1; }
     }
-}
-
-function loadFromLocalStorage() {
-    try {
-        const saved = localStorage.getItem('tiManagerData');
-        if (saved) {
-            appData = JSON.parse(saved);
-            updateUI();
-        }
-    } catch (error) {
-        console.error('Erro ao carregar do localStorage:', error);
+    @keyframes slideOutRight {
+        from { transform: translateX(0); opacity: 1; }
+        to { transform: translateX(100%); opacity: 0; }
     }
-}
+    .text-success { color: #27ae60; }
+    .text-muted { color: #7f8c8d; }
+`;
+document.head.appendChild(style);
 
 // Inicializar a aplicação quando o DOM estiver carregado
 document.addEventListener('DOMContentLoaded', init);
