@@ -29,6 +29,7 @@
             <button class="tab-btn active" data-tab="company">Empresa</button>
             <button class="tab-btn" data-tab="credentials">Credenciais</button>
             <button class="tab-btn" data-tab="equipment">Equipamentos</button>
+            <button class="tab-btn" data-tab="anydesk">Anydesk</button>
         </div>
 
         <div class="app-content">
@@ -269,6 +270,55 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Nova Aba Anydesk -->
+            <div id="anydesk-tab" class="tab-content">
+                <div class="anydesk-form">
+                    <h2><i class="fas fa-desktop"></i> Gerenciar Anydesk</h2>
+                    <div class="form-group">
+                        <label for="anydesk-ip"><i class="fas fa-network-wired"></i> IP do Anydesk*</label>
+                        <input type="text" id="anydesk-ip" class="form-input" placeholder="Ex: 192 168 1 100" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="anydesk-user"><i class="fas fa-user"></i> Usuário Responsável*</label>
+                        <select id="anydesk-user" class="form-input" required>
+                            <option value="">Selecione um usuário...</option>
+                            <!-- Os usuários serão preenchidos via JavaScript -->
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="anydesk-notes"><i class="fas fa-sticky-note"></i> Observações</label>
+                        <textarea id="anydesk-notes" class="form-input" rows="3" placeholder="Informações adicionais sobre esta configuração"></textarea>
+                    </div>
+                    <div class="form-actions">
+                        <button id="save-anydesk" class="btn success">
+                            <i class="fas fa-check"></i> Salvar Anydesk
+                        </button>
+                        <button id="clear-anydesk" class="btn secondary">
+                            <i class="fas fa-times"></i> Limpar
+                        </button>
+                    </div>
+                </div>
+
+                <div class="anydesk-table-container">
+                    <h2><i class="fas fa-list"></i> Configurações Anydesk Cadastradas</h2>
+                    <div class="table-scroll">
+                        <table id="anydesk-table">
+                            <thead>
+                                <tr>
+                                    <th>IP</th>
+                                    <th>Usuário</th>
+                                    <th>Observações</th>
+                                    <th>Ações</th>
+                                </tr>
+                            </thead>
+                            <tbody id="anydesk-list">
+                                <!-- Configurações do Anydesk serão inseridas aqui via JavaScript -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- Modal Gerador de Senhas -->
@@ -323,9 +373,7 @@
         </div>
     </div>
 
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="script.js"></script>
 </body>
 </html>
-
-
