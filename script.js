@@ -9,7 +9,8 @@ let appData = {
     credentials: [],
     notebooks: [],
     printers: [],
-    users: [] // Para sugestões de usuários
+    users: [], // Para sugestões de usuários
+    anydesk: [] // Nova propriedade para armazenar configurações do Anydesk
 };
 
 // Elementos DOM
@@ -71,6 +72,14 @@ const elements = {
     savePrinter: document.getElementById('save-printer'),
     printersList: document.getElementById('printers-list'),
     
+    // Formulário do Anydesk
+    anydeskIp: document.getElementById('anydesk-ip'),
+    anydeskUser: document.getElementById('anydesk-user'),
+    anydeskNotes: document.getElementById('anydesk-notes'),
+    saveAnydesk: document.getElementById('save-anydesk'),
+    clearAnydesk: document.getElementById('clear-anydesk'),
+    anydeskList: document.getElementById('anydesk-list'),
+    
     // Modal de senhas
     passwordModal: document.getElementById('password-modal'),
     closeModal: document.getElementById('close-modal'),
@@ -90,6 +99,7 @@ function init() {
     setupEventListeners();
     updateSaveButtonState();
     generatePassword(); // Gerar senha inicial no modal
+    updateUsersList(); // Atualizar lista de usuários para o Anydesk
 }
 
 // Configuração de event listeners
@@ -129,6 +139,11 @@ function setupEventListeners() {
     elements.savePrinter.addEventListener('click', savePrinter);
     elements.printerUsersInput.addEventListener('input', showUserSuggestions);
     elements.printerUsersInput.addEventListener('keydown', handleTagInput);
+
+    // Formulário do Anydesk
+    elements.saveAnydesk.addEventListener('click', saveAnydesk);
+    elements.clearAnydesk.addEventListener('click', clearAnydeskForm);
+    elements.anydeskIp.addEventListener('input', formatAnydeskIp);
 
     // Modal de senhas
     elements.closeModal.addEventListener('click', closePasswordModal);
@@ -198,7 +213,8 @@ function newFile() {
             credentials: [],
             notebooks: [],
             printers: [],
-            users: []
+            users: [],
+            anydesk: []
         };
         
         clearForms();
@@ -231,14 +247,31 @@ function handleFileOpen(event) {
                 appData.credentials = XLSX.utils.sheet_to_json(workbook.Sheets['Credenciais']);
             }
             
-            // Ler notebooks
+            // Ler notebooks - com tratamento para arrays
             if (workbook.Sheets['Notebooks']) {
-                appData.notebooks = XLSX.utils.sheet_to_json(workbook.Sheets['Notebooks']);
+                const notebooksData = XLSX.utils.sheet_to_json(workbook.Sheets['Notebooks']);
+                appData.notebooks = notebooksData.map(notebook => ({
+                    ...notebook,
+                    connections: typeof notebook.connections === 'string' 
+                        ? notebook.connections.split(', ') 
+                        : (notebook.connections || [])
+                }));
             }
             
-            // Ler impressoras
+            // Ler impressoras - com tratamento para arrays
             if (workbook.Sheets['Impressoras']) {
-                appData.printers = XLSX.utils.sheet_to_json(workbook.Sheets['Impressoras']);
+                const printersData = XLSX.utils.sheet_to_json(workbook.Sheets['Impressoras']);
+                appData.printers = printersData.map(printer => ({
+                    ...printer,
+                    users: typeof printer.users === 'string' 
+                        ? printer.users.split(', ') 
+                        : (printer.users || [])
+                }));
+            }
+            
+            // Ler configurações do Anydesk
+            if (workbook.Sheets['Anydesk']) {
+                appData.anydesk = XLSX.utils.sheet_to_json(workbook.Sheets['Anydesk']);
             }
             
             updateUI();
@@ -246,6 +279,7 @@ function handleFileOpen(event) {
             alert('Arquivo carregado com sucesso!');
             
         } catch (error) {
+            console.error('Erro detalhado:', error);
             alert('Erro ao ler o arquivo: ' + error.message);
         }
     };
@@ -264,13 +298,29 @@ function saveToExcel() {
         const credentialsWorksheet = XLSX.utils.json_to_sheet(appData.credentials);
         XLSX.utils.book_append_sheet(workbook, credentialsWorksheet, 'Credenciais');
         
-        // Adicionar aba de notebooks
-        const notebooksWorksheet = XLSX.utils.json_to_sheet(appData.notebooks);
+        // Adicionar aba de notebooks - converter arrays para strings
+        const notebooksForExport = appData.notebooks.map(notebook => ({
+            ...notebook,
+            connections: Array.isArray(notebook.connections) 
+                ? notebook.connections.join(', ') 
+                : notebook.connections
+        }));
+        const notebooksWorksheet = XLSX.utils.json_to_sheet(notebooksForExport);
         XLSX.utils.book_append_sheet(workbook, notebooksWorksheet, 'Notebooks');
         
-        // Adicionar aba de impressoras
-        const printersWorksheet = XLSX.utils.json_to_sheet(appData.printers);
+        // Adicionar aba de impressoras - converter arrays para strings
+        const printersForExport = appData.printers.map(printer => ({
+            ...printer,
+            users: Array.isArray(printer.users) 
+                ? printer.users.join(', ') 
+                : printer.users
+        }));
+        const printersWorksheet = XLSX.utils.json_to_sheet(printersForExport);
         XLSX.utils.book_append_sheet(workbook, printersWorksheet, 'Impressoras');
+        
+        // Adicionar aba do Anydesk
+        const anydeskWorksheet = XLSX.utils.json_to_sheet(appData.anydesk);
+        XLSX.utils.book_append_sheet(workbook, anydeskWorksheet, 'Anydesk');
         
         // Gerar nome do arquivo
         const fileName = appData.company.name 
@@ -282,6 +332,7 @@ function saveToExcel() {
         alert('Arquivo salvo com sucesso!');
         
     } catch (error) {
+        console.error('Erro ao salvar:', error);
         alert('Erro ao salvar o arquivo: ' + error.message);
     }
 }
@@ -583,6 +634,9 @@ function saveNotebook() {
         appData.users.push(notebook.user);
     }
     
+    // Atualizar lista de usuários no formulário do Anydesk
+    updateUsersList();
+    
     alert('Notebook salvo com sucesso!');
 }
 
@@ -625,12 +679,17 @@ function updateNotebooksTable() {
     appData.notebooks.forEach(notebook => {
         const row = document.createElement('tr');
         
+        // Garantir que connections seja um array
+        const connections = Array.isArray(notebook.connections) 
+            ? notebook.connections 
+            : (notebook.connections ? [notebook.connections] : []);
+        
         row.innerHTML = `
-            <td>${escapeHtml(notebook.user)}</td>
-            <td>${escapeHtml(notebook.brand)}</td>
+            <td>${escapeHtml(notebook.user || '')}</td>
+            <td>${escapeHtml(notebook.brand || '')}</td>
             <td>${escapeHtml(notebook.serial || '-')}</td>
-            <td>${escapeHtml(notebook.os)}</td>
-            <td>${notebook.connections.join(', ')}</td>
+            <td>${escapeHtml(notebook.os || '')}</td>
+            <td>${connections.join(', ')}</td>
             <td>
                 <button class="action-btn edit-notebook" data-id="${notebook.id}">
                     <i class="fas fa-edit"></i>
@@ -711,6 +770,9 @@ function savePrinter() {
         }
     });
     
+    // Atualizar lista de usuários no formulário do Anydesk
+    updateUsersList();
+    
     alert('Impressora salva com sucesso!');
 }
 
@@ -746,12 +808,17 @@ function updatePrintersTable() {
     appData.printers.forEach(printer => {
         const row = document.createElement('tr');
         
+        // Garantir que users seja um array
+        const users = Array.isArray(printer.users) 
+            ? printer.users 
+            : (printer.users ? [printer.users] : []);
+        
         row.innerHTML = `
-            <td>${escapeHtml(printer.name)}</td>
+            <td>${escapeHtml(printer.name || '')}</td>
             <td>${escapeHtml(printer.serial || '-')}</td>
-            <td>${escapeHtml(printer.location)}</td>
-            <td>${escapeHtml(printer.connection)}</td>
-            <td>${printer.users.length > 0 ? printer.users.join(', ') : '-'}</td>
+            <td>${escapeHtml(printer.location || '')}</td>
+            <td>${escapeHtml(printer.connection || '')}</td>
+            <td>${users.length > 0 ? users.join(', ') : '-'}</td>
             <td>
                 <button class="action-btn edit-printer" data-id="${printer.id}">
                     <i class="fas fa-edit"></i>
@@ -801,6 +868,197 @@ function deletePrinter(id) {
         updatePrintersTable();
         saveToLocalStorage();
     }
+}
+
+// Formulário do Anydesk - FUNÇÕES NOVAS E ATUALIZADAS
+function formatAnydeskIp() {
+    let value = elements.anydeskIp.value.replace(/\D/g, ''); // Remove tudo que não é número
+    
+    // Limita a 9 dígitos (formato do Anydesk)
+    if (value.length > 9) {
+        value = value.substring(0, 9);
+    }
+    
+    // Formata com espaços: 1 710 780 607
+    if (value.length > 0) {
+        let formatted = '';
+        for (let i = 0; i < value.length; i++) {
+            if (i === 1 || i === 4 || i === 7) {
+                formatted += ' ' + value[i];
+            } else {
+                formatted += value[i];
+            }
+        }
+        elements.anydeskIp.value = formatted;
+    }
+}
+
+function getCleanAnydeskId(anydeskIp) {
+    // Remove espaços e formata para o padrão sem espaços
+    return anydeskIp.replace(/\s/g, '');
+}
+
+function getFormattedAnydeskId(anydeskIp) {
+    // Formata para exibição: 1 710 780 607
+    const cleanId = getCleanAnydeskId(anydeskIp);
+    if (cleanId.length === 9) {
+        return `${cleanId[0]} ${cleanId.substring(1, 4)} ${cleanId.substring(4, 7)} ${cleanId.substring(7, 9)}`;
+    }
+    return cleanId;
+}
+
+function saveAnydesk() {
+    if (!validateAnydeskForm()) return;
+
+    const cleanIp = getCleanAnydeskId(elements.anydeskIp.value.trim());
+
+    const anydeskConfig = {
+        id: Date.now().toString(),
+        ip: cleanIp,
+        formattedIp: getFormattedAnydeskId(elements.anydeskIp.value.trim()),
+        user: elements.anydeskUser.value,
+        notes: elements.anydeskNotes.value.trim(),
+        createdAt: new Date().toISOString()
+    };
+
+    appData.anydesk.push(anydeskConfig);
+    updateAnydeskTable();
+    clearAnydeskForm();
+    saveToLocalStorage();
+    
+    alert('Configuração do Anydesk salva com sucesso!');
+}
+
+function validateAnydeskForm() {
+    const required = [
+        elements.anydeskIp,
+        elements.anydeskUser
+    ];
+
+    for (let field of required) {
+        if (!field.value.trim()) {
+            alert(`Por favor, preencha o campo: ${field.previousElementSibling.textContent}`);
+            field.focus();
+            return false;
+        }
+    }
+
+    // Validar formato do Anydesk ID (9 dígitos)
+    const cleanIp = getCleanAnydeskId(elements.anydeskIp.value.trim());
+    const anydeskRegex = /^\d{9}$/;
+    if (!anydeskRegex.test(cleanIp)) {
+        alert('Por favor, insira um ID Anydesk válido com 9 dígitos.');
+        elements.anydeskIp.focus();
+        return false;
+    }
+
+    return true;
+}
+
+function clearAnydeskForm() {
+    elements.anydeskIp.value = '';
+    elements.anydeskUser.value = '';
+    elements.anydeskNotes.value = '';
+}
+
+function updateAnydeskTable() {
+    elements.anydeskList.innerHTML = '';
+
+    appData.anydesk.forEach(config => {
+        const row = document.createElement('tr');
+        
+        // Usar o IP formatado para exibição
+        const displayIp = config.formattedIp || getFormattedAnydeskId(config.ip);
+        
+        row.innerHTML = `
+            <td>${escapeHtml(displayIp)}</td>
+            <td>${escapeHtml(config.user)}</td>
+            <td>${escapeHtml(config.notes || '-')}</td>
+            <td>
+                <button class="action-btn copy-anydesk" data-ip="${escapeHtml(config.ip)}" title="Copiar ID Anydesk">
+                    <i class="fas fa-copy"></i>
+                </button>
+                <button class="action-btn edit-anydesk" data-id="${config.id}">
+                    <i class="fas fa-edit"></i>
+                </button>
+                <button class="action-btn delete-anydesk" data-id="${config.id}">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </td>
+        `;
+
+        const copyBtn = row.querySelector('.copy-anydesk');
+        const editBtn = row.querySelector('.edit-anydesk');
+        const deleteBtn = row.querySelector('.delete-anydesk');
+
+        copyBtn.addEventListener('click', function() {
+            const anydeskId = this.dataset.ip;
+            navigator.clipboard.writeText(anydeskId).then(() => {
+                alert(`ID Anydesk ${anydeskId} copiado para a área de transferência!`);
+            });
+        });
+
+        editBtn.addEventListener('click', () => editAnydesk(config.id));
+        deleteBtn.addEventListener('click', () => deleteAnydesk(config.id));
+
+        elements.anydeskList.appendChild(row);
+    });
+}
+
+function editAnydesk(id) {
+    const config = appData.anydesk.find(a => a.id === id);
+    if (!config) return;
+
+    // Usar o IP formatado para edição
+    elements.anydeskIp.value = config.formattedIp || getFormattedAnydeskId(config.ip);
+    elements.anydeskUser.value = config.user;
+    elements.anydeskNotes.value = config.notes || '';
+
+    // Remover a configuração da lista (será readicionada ao salvar)
+    appData.anydesk = appData.anydesk.filter(a => a.id !== id);
+    updateAnydeskTable();
+    
+    elements.saveAnydesk.scrollIntoView({ behavior: 'smooth' });
+}
+
+function deleteAnydesk(id) {
+    if (confirm('Tem certeza que deseja excluir esta configuração do Anydesk?')) {
+        appData.anydesk = appData.anydesk.filter(a => a.id !== id);
+        updateAnydeskTable();
+        saveToLocalStorage();
+    }
+}
+
+// Função para atualizar a lista de usuários no select do Anydesk
+function updateUsersList() {
+    elements.anydeskUser.innerHTML = '<option value="">Selecione um usuário...</option>';
+    
+    // Coletar usuários únicos de notebooks
+    const notebookUsers = [...new Set(appData.notebooks
+        .filter(n => n.user && n.user.trim())
+        .map(n => n.user.trim()))];
+    
+    // Coletar usuários únicos de impressoras
+    const printerUsers = [];
+    appData.printers.forEach(printer => {
+        const users = Array.isArray(printer.users) ? printer.users : (printer.users ? [printer.users] : []);
+        users.forEach(user => {
+            if (user && user.trim() && !printerUsers.includes(user.trim())) {
+                printerUsers.push(user.trim());
+            }
+        });
+    });
+    
+    // Combinar e remover duplicatas
+    const allUsers = [...new Set([...notebookUsers, ...printerUsers])];
+    
+    // Adicionar opções ao select
+    allUsers.forEach(user => {
+        const option = document.createElement('option');
+        option.value = user;
+        option.textContent = user;
+        elements.anydeskUser.appendChild(option);
+    });
 }
 
 // Sistema de tags para usuários
@@ -879,7 +1137,8 @@ function updateSaveButtonState() {
     const hasData = appData.company.name || 
                    appData.credentials.length > 0 || 
                    appData.notebooks.length > 0 || 
-                   appData.printers.length > 0;
+                   appData.printers.length > 0 ||
+                   appData.anydesk.length > 0;
     
     elements.saveBtn.disabled = !hasData;
 }
@@ -894,6 +1153,10 @@ function updateUI() {
     updateCredentialsTable();
     updateNotebooksTable();
     updatePrintersTable();
+    updateAnydeskTable();
+    
+    // Atualizar lista de usuários
+    updateUsersList();
 
     updateSaveButtonState();
 }
@@ -909,6 +1172,56 @@ function clearForms() {
     clearCredentialForm();
     clearNotebookForm();
     clearPrinterForm();
+    clearAnydeskForm();
+}
+
+// Função para validar e corrigir dados ao carregar do localStorage
+function validateAndFixData(data) {
+    // Garantir que todos os arrays existam
+    if (!data.credentials) data.credentials = [];
+    if (!data.notebooks) data.notebooks = [];
+    if (!data.printers) data.printers = [];
+    if (!data.users) data.users = [];
+    if (!data.anydesk) data.anydesk = [];
+    
+    // Validar e corrigir notebooks
+    data.notebooks = data.notebooks.map(notebook => ({
+        id: notebook.id || Date.now().toString(),
+        user: notebook.user || '',
+        brand: notebook.brand || '',
+        serial: notebook.serial || '',
+        os: notebook.os || '',
+        connections: Array.isArray(notebook.connections) 
+            ? notebook.connections 
+            : (notebook.connections ? [notebook.connections] : []),
+        createdAt: notebook.createdAt || new Date().toISOString()
+    }));
+    
+    // Validar e corrigir impressoras
+    data.printers = data.printers.map(printer => ({
+        id: printer.id || Date.now().toString(),
+        name: printer.name || '',
+        serial: printer.serial || '',
+        ip: printer.ip || '',
+        location: printer.location || '',
+        connection: printer.connection || 'Wi-Fi',
+        users: Array.isArray(printer.users) 
+            ? printer.users 
+            : (printer.users ? [printer.users] : []),
+        createdAt: printer.createdAt || new Date().toISOString()
+    }));
+    
+    // Validar e corrigir anydesk
+    data.anydesk = data.anydesk.map(config => ({
+        id: config.id || Date.now().toString(),
+        ip: config.ip || '',
+        formattedIp: config.formattedIp || (config.ip ? getFormattedAnydeskId(config.ip) : ''),
+        user: config.user || '',
+        notes: config.notes || '',
+        createdAt: config.createdAt || new Date().toISOString()
+    }));
+    
+    return data;
 }
 
 // Local Storage
@@ -924,11 +1237,21 @@ function loadFromLocalStorage() {
     try {
         const saved = localStorage.getItem('tiManagerData');
         if (saved) {
-            appData = JSON.parse(saved);
+            const parsedData = JSON.parse(saved);
+            appData = validateAndFixData(parsedData);
             updateUI();
         }
     } catch (error) {
         console.error('Erro ao carregar do localStorage:', error);
+        // Se houver erro, inicializa com dados vazios
+        appData = {
+            company: { name: '', logo: null, address: '', contact: '' },
+            credentials: [],
+            notebooks: [],
+            printers: [],
+            users: [],
+            anydesk: []
+        };
     }
 }
 
