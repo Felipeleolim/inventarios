@@ -166,7 +166,8 @@ body {
 .company-form,
 .credential-form,
 .notebook-form,
-.printer-form {
+.printer-form,
+.anydesk-form {
     background: #f8f9fa;
     padding: 2rem;
     border-radius: 12px;
@@ -177,7 +178,8 @@ body {
 .company-form h2,
 .credential-form h2,
 .notebook-form h3,
-.printer-form h3 {
+.printer-form h3,
+.anydesk-form h2 {
     color: #2c3e50;
     margin-bottom: 1.5rem;
     font-size: 1.4rem;
@@ -186,7 +188,8 @@ body {
 .company-form h2 i,
 .credential-form h2 i,
 .notebook-form h3 i,
-.printer-form h3 i {
+.printer-form h3 i,
+.anydesk-form h2 i {
     margin-right: 0.5rem;
     color: #3498db;
 }
@@ -318,7 +321,8 @@ body {
 /* Tabelas */
 .credentials-table-container,
 .notebooks-table-container,
-.printers-table-container {
+.printers-table-container,
+.anydesk-table-container {
     background: white;
     border-radius: 12px;
     padding: 1.5rem;
@@ -327,7 +331,8 @@ body {
 
 .credentials-table-container h2,
 .notebooks-table-container h3,
-.printers-table-container h3 {
+.printers-table-container h3,
+.anydesk-table-container h2 {
     color: #2c3e50;
     margin-bottom: 1rem;
     font-size: 1.2rem;
@@ -335,7 +340,8 @@ body {
 
 .credentials-table-container h2 i,
 .notebooks-table-container h3 i,
-.printers-table-container h3 i {
+.printers-table-container h3 i,
+.anydesk-table-container h2 i {
     margin-right: 0.5rem;
     color: #3498db;
 }
@@ -689,7 +695,8 @@ tr:hover {
     .company-form,
     .credential-form,
     .notebook-form,
-    .printer-form {
+    .printer-form,
+    .anydesk-form {
         padding: 1.5rem;
     }
 
