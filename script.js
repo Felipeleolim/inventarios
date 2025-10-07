@@ -1,20 +1,29 @@
 // Dados da aplicação
+let clients = {}; // Objeto para armazenar múltiplos clientes
+let currentClientId = null; // ID do cliente atualmente selecionado
 let appData = {
-    company: {
-        name: '',
-        logo: null,
-        address: '',
-        contact: ''
-    },
+    company: { name: '', logo: null, address: '', contact: '' },
     credentials: [],
     notebooks: [],
     printers: [],
-    users: [], // Para sugestões de usuários
-    anydesk: [] // Nova propriedade para armazenar configurações do Anydesk
+    users: [],
+    anydesk: [],
+    notes: []
 };
 
 // Elementos DOM
 const elements = {
+    // Sidebar e clientes
+    clientsSidebar: document.getElementById('clients-sidebar'),
+    clientsList: document.getElementById('clients-list'),
+    noClients: document.getElementById('no-clients'),
+    toggleSidebar: document.getElementById('toggle-sidebar'),
+    currentClient: document.getElementById('current-client'),
+    clientName: document.getElementById('client-name'),
+    openFolderBtn: document.getElementById('open-folder-btn'),
+    loadClientsBtn: document.getElementById('load-clients-btn'),
+    sidebarOverlay: null,
+
     // Abas principais
     tabBtns: document.querySelectorAll('.tab-btn'),
     tabContents: document.querySelectorAll('.tab-content'),
@@ -80,6 +89,16 @@ const elements = {
     clearAnydesk: document.getElementById('clear-anydesk'),
     anydeskList: document.getElementById('anydesk-list'),
     
+    // Formulário de anotações
+    noteTitle: document.getElementById('note-title'),
+    noteContent: document.getElementById('note-content'),
+    noteCategory: document.getElementById('note-category'),
+    saveNote: document.getElementById('save-note'),
+    clearNote: document.getElementById('clear-note'),
+    notesList: document.getElementById('notes-list'),
+    filterCategory: document.getElementById('filter-category'),
+    searchNotes: document.getElementById('search-notes'),
+    
     // Modal de senhas
     passwordModal: document.getElementById('password-modal'),
     closeModal: document.getElementById('close-modal'),
@@ -95,15 +114,22 @@ const elements = {
 
 // Inicialização da aplicação
 function init() {
-    loadFromLocalStorage();
+    createSidebarOverlay();
+    loadClientsFromLocalStorage();
     setupEventListeners();
     updateSaveButtonState();
-    generatePassword(); // Gerar senha inicial no modal
-    updateUsersList(); // Atualizar lista de usuários para o Anydesk
+    generatePassword();
+    updateUsersList();
 }
 
 // Configuração de event listeners
 function setupEventListeners() {
+    // Sidebar e clientes
+    elements.toggleSidebar.addEventListener('click', toggleSidebar);
+    elements.openFolderBtn.addEventListener('click', openFolderDialog);
+    elements.loadClientsBtn.addEventListener('click', openFolderDialog);
+    elements.sidebarOverlay.addEventListener('click', closeSidebar);
+    
     // Abas principais
     elements.tabBtns.forEach(btn => {
         btn.addEventListener('click', () => switchTab(btn.dataset.tab));
@@ -145,6 +171,12 @@ function setupEventListeners() {
     elements.clearAnydesk.addEventListener('click', clearAnydeskForm);
     elements.anydeskIp.addEventListener('input', formatAnydeskIp);
 
+    // Formulário de anotações
+    elements.saveNote.addEventListener('click', saveNote);
+    elements.clearNote.addEventListener('click', clearNoteForm);
+    elements.filterCategory.addEventListener('change', filterNotes);
+    elements.searchNotes.addEventListener('input', filterNotes);
+
     // Modal de senhas
     elements.closeModal.addEventListener('click', closePasswordModal);
     elements.copyPassword.addEventListener('click', copyGeneratedPassword);
@@ -176,6 +208,258 @@ function setupEventListeners() {
     });
 }
 
+// Funções para gerenciar múltiplos clientes
+function createSidebarOverlay() {
+    elements.sidebarOverlay = document.createElement('div');
+    elements.sidebarOverlay.className = 'sidebar-overlay';
+    document.body.appendChild(elements.sidebarOverlay);
+}
+
+function toggleSidebar() {
+    elements.clientsSidebar.classList.toggle('active');
+    elements.sidebarOverlay.classList.toggle('active');
+}
+
+function closeSidebar() {
+    elements.clientsSidebar.classList.remove('active');
+    elements.sidebarOverlay.classList.remove('active');
+}
+
+function openFolderDialog() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.webkitdirectory = true;
+    input.multiple = true;
+    input.accept = '.xlsx,.xls';
+    
+    input.onchange = (e) => {
+        const files = Array.from(e.target.files);
+        loadClientsFromFiles(files);
+    };
+    
+    input.click();
+}
+
+async function loadClientsFromFiles(files) {
+    const excelFiles = files.filter(file => 
+        file.name.match(/\.(xlsx|xls)$/i)
+    );
+
+    if (excelFiles.length === 0) {
+        alert('Nenhum arquivo Excel encontrado na pasta.');
+        return;
+    }
+
+    try {
+        for (const file of excelFiles) {
+            await loadClientFromFile(file);
+        }
+        
+        updateClientsList();
+        saveClientsToLocalStorage();
+        alert(`${excelFiles.length} cliente(s) carregado(s) com sucesso!`);
+        
+    } catch (error) {
+        console.error('Erro ao carregar clientes:', error);
+        alert('Erro ao carregar alguns arquivos. Verifique o console para detalhes.');
+    }
+}
+
+function loadClientFromFile(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        
+        reader.onload = function(e) {
+            try {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                
+                // Extrair nome do cliente do nome do arquivo
+                const clientName = file.name.replace(/\.(xlsx|xls)$/i, '').trim();
+                const clientId = generateClientId(clientName);
+                
+                // Carregar dados do cliente
+                const clientData = {
+                    id: clientId,
+                    name: clientName,
+                    company: {},
+                    credentials: [],
+                    notebooks: [],
+                    printers: [],
+                    anydesk: [],
+                    notes: [],
+                    lastModified: new Date().toISOString()
+                };
+                
+                // Ler dados das abas
+                if (workbook.Sheets['Empresa']) {
+                    const companyData = XLSX.utils.sheet_to_json(workbook.Sheets['Empresa']);
+                    if (companyData.length > 0) {
+                        clientData.company = companyData[0];
+                    }
+                }
+                
+                if (workbook.Sheets['Credenciais']) {
+                    clientData.credentials = XLSX.utils.sheet_to_json(workbook.Sheets['Credenciais']);
+                }
+                
+                if (workbook.Sheets['Notebooks']) {
+                    const notebooksData = XLSX.utils.sheet_to_json(workbook.Sheets['Notebooks']);
+                    clientData.notebooks = notebooksData.map(notebook => ({
+                        ...notebook,
+                        connections: typeof notebook.connections === 'string' 
+                            ? notebook.connections.split(', ') 
+                            : (notebook.connections || [])
+                    }));
+                }
+                
+                if (workbook.Sheets['Impressoras']) {
+                    const printersData = XLSX.utils.sheet_to_json(workbook.Sheets['Impressoras']);
+                    clientData.printers = printersData.map(printer => ({
+                        ...printer,
+                        users: typeof printer.users === 'string' 
+                            ? printer.users.split(', ') 
+                            : (printer.users || [])
+                    }));
+                }
+                
+                if (workbook.Sheets['Anydesk']) {
+                    clientData.anydesk = XLSX.utils.sheet_to_json(workbook.Sheets['Anydesk']);
+                }
+
+                if (workbook.Sheets['Anotações']) {
+                    clientData.notes = XLSX.utils.sheet_to_json(workbook.Sheets['Anotações']);
+                }
+                
+                // Adicionar cliente à lista
+                clients[clientId] = clientData;
+                resolve(clientData);
+                
+            } catch (error) {
+                reject(error);
+            }
+        };
+        
+        reader.onerror = () => reject(new Error(`Erro ao ler arquivo: ${file.name}`));
+        reader.readAsArrayBuffer(file);
+    });
+}
+
+function generateClientId(clientName) {
+    return clientName.toLowerCase().replace(/[^a-z0-9]/g, '-') + '-' + Date.now();
+}
+
+function updateClientsList() {
+    elements.clientsList.innerHTML = '';
+    
+    const clientIds = Object.keys(clients);
+    
+    if (clientIds.length === 0) {
+        elements.noClients.style.display = 'block';
+        return;
+    }
+    
+    elements.noClients.style.display = 'none';
+    
+    clientIds.forEach(clientId => {
+        const client = clients[clientId];
+        const clientItem = document.createElement('div');
+        clientItem.className = `client-item ${currentClientId === clientId ? 'active' : ''}`;
+        
+        clientItem.innerHTML = `
+            <div class="client-name">${escapeHtml(client.name)}</div>
+            <div class="client-actions">
+                <button class="client-action-btn remove-client" data-id="${clientId}" title="Remover cliente">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+        `;
+        
+        // Event listeners
+        clientItem.addEventListener('click', (e) => {
+            if (!e.target.closest('.client-actions')) {
+                selectClient(clientId);
+            }
+        });
+        
+        const removeBtn = clientItem.querySelector('.remove-client');
+        removeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            removeClient(clientId);
+        });
+        
+        elements.clientsList.appendChild(clientItem);
+    });
+}
+
+function selectClient(clientId) {
+    if (!clients[clientId]) return;
+    
+    currentClientId = clientId;
+    const client = clients[clientId];
+    
+    // Atualizar UI com dados do cliente
+    updateUIWithClientData(client);
+    
+    // Atualizar lista de clientes
+    updateClientsList();
+    
+    // Atualizar header
+    elements.clientName.textContent = client.name;
+    
+    // Fechar sidebar no mobile
+    closeSidebar();
+    
+    // Salvar estado
+    saveClientsToLocalStorage();
+}
+
+function updateUIWithClientData(client) {
+    // Atualizar dados da empresa
+    elements.companyName.value = client.company.name || '';
+    elements.companyAddress.value = client.company.address || '';
+    elements.companyContact.value = client.company.contact || '';
+    
+    // Atualizar appData com dados do cliente selecionado
+    appData = {
+        company: client.company,
+        credentials: client.credentials || [],
+        notebooks: client.notebooks || [],
+        printers: client.printers || [],
+        users: client.users || [],
+        anydesk: client.anydesk || [],
+        notes: client.notes || []
+    };
+    
+    // Atualizar tabelas
+    updateCredentialsTable();
+    updateNotebooksTable();
+    updatePrintersTable();
+    updateAnydeskTable();
+    updateNotesTable();
+    updateUsersList();
+    updateSaveButtonState();
+}
+
+function removeClient(clientId) {
+    if (!confirm(`Tem certeza que deseja remover o cliente "${clients[clientId].name}"?`)) {
+        return;
+    }
+    
+    delete clients[clientId];
+    
+    // Se o cliente removido era o atual, limpar a interface
+    if (currentClientId === clientId) {
+        currentClientId = null;
+        elements.clientName.textContent = 'Nenhum cliente selecionado';
+        clearForms();
+        updateUI();
+    }
+    
+    updateClientsList();
+    saveClientsToLocalStorage();
+}
+
 // Navegação entre abas
 function switchTab(tabName) {
     // Atualizar botões das abas
@@ -189,7 +473,7 @@ function switchTab(tabName) {
     });
 
     // Salvar estado atual
-    saveToLocalStorage();
+    saveClientsToLocalStorage();
 }
 
 // Navegação entre sub-abas
@@ -207,99 +491,63 @@ function switchSubTab(subtabName) {
 
 // Gerenciamento de arquivos
 function newFile() {
-    if (confirm('Deseja criar um novo arquivo? Todos os dados não salvos serão perdidos.')) {
-        appData = {
-            company: { name: '', logo: null, address: '', contact: '' },
-            credentials: [],
-            notebooks: [],
-            printers: [],
-            users: [],
-            anydesk: []
-        };
-        
-        clearForms();
-        updateUI();
-        saveToLocalStorage();
-        alert('Novo arquivo criado com sucesso!');
-    }
+    const clientName = prompt('Digite o nome do novo cliente:');
+    if (!clientName) return;
+    
+    const clientId = generateClientId(clientName);
+    
+    clients[clientId] = {
+        id: clientId,
+        name: clientName,
+        company: { name: clientName, logo: null, address: '', contact: '' },
+        credentials: [],
+        notebooks: [],
+        printers: [],
+        anydesk: [],
+        notes: [],
+        lastModified: new Date().toISOString()
+    };
+    
+    selectClient(clientId);
+    updateClientsList();
+    saveClientsToLocalStorage();
+    
+    alert(`Novo cliente "${clientName}" criado com sucesso!`);
 }
 
 function handleFileOpen(event) {
     const file = event.target.files[0];
     if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = function(e) {
-        try {
-            const data = new Uint8Array(e.target.result);
-            const workbook = XLSX.read(data, { type: 'array' });
-            
-            // Ler dados da empresa
-            if (workbook.Sheets['Empresa']) {
-                const companyData = XLSX.utils.sheet_to_json(workbook.Sheets['Empresa']);
-                if (companyData.length > 0) {
-                    appData.company = companyData[0];
-                }
-            }
-            
-            // Ler credenciais
-            if (workbook.Sheets['Credenciais']) {
-                appData.credentials = XLSX.utils.sheet_to_json(workbook.Sheets['Credenciais']);
-            }
-            
-            // Ler notebooks - com tratamento para arrays
-            if (workbook.Sheets['Notebooks']) {
-                const notebooksData = XLSX.utils.sheet_to_json(workbook.Sheets['Notebooks']);
-                appData.notebooks = notebooksData.map(notebook => ({
-                    ...notebook,
-                    connections: typeof notebook.connections === 'string' 
-                        ? notebook.connections.split(', ') 
-                        : (notebook.connections || [])
-                }));
-            }
-            
-            // Ler impressoras - com tratamento para arrays
-            if (workbook.Sheets['Impressoras']) {
-                const printersData = XLSX.utils.sheet_to_json(workbook.Sheets['Impressoras']);
-                appData.printers = printersData.map(printer => ({
-                    ...printer,
-                    users: typeof printer.users === 'string' 
-                        ? printer.users.split(', ') 
-                        : (printer.users || [])
-                }));
-            }
-            
-            // Ler configurações do Anydesk
-            if (workbook.Sheets['Anydesk']) {
-                appData.anydesk = XLSX.utils.sheet_to_json(workbook.Sheets['Anydesk']);
-            }
-            
-            updateUI();
-            saveToLocalStorage();
-            alert('Arquivo carregado com sucesso!');
-            
-        } catch (error) {
-            console.error('Erro detalhado:', error);
-            alert('Erro ao ler o arquivo: ' + error.message);
-        }
-    };
-    reader.readAsArrayBuffer(file);
+    
+    loadClientFromFile(file).then(client => {
+        updateClientsList();
+        saveClientsToLocalStorage();
+        selectClient(client.id);
+        alert(`Cliente "${client.name}" carregado com sucesso!`);
+    }).catch(error => {
+        console.error('Erro:', error);
+        alert('Erro ao carregar arquivo: ' + error.message);
+    });
 }
 
 function saveToExcel() {
+    if (!currentClientId) {
+        alert('Nenhum cliente selecionado.');
+        return;
+    }
+    
     try {
+        const client = clients[currentClientId];
         const workbook = XLSX.utils.book_new();
         
-        // Adicionar aba da empresa
-        const companyWorksheet = XLSX.utils.json_to_sheet([appData.company]);
+        // Adicionar abas
+        const companyWorksheet = XLSX.utils.json_to_sheet([client.company]);
         XLSX.utils.book_append_sheet(workbook, companyWorksheet, 'Empresa');
         
-        // Adicionar aba de credenciais
-        const credentialsWorksheet = XLSX.utils.json_to_sheet(appData.credentials);
+        const credentialsWorksheet = XLSX.utils.json_to_sheet(client.credentials);
         XLSX.utils.book_append_sheet(workbook, credentialsWorksheet, 'Credenciais');
         
-        // Adicionar aba de notebooks - converter arrays para strings
-        const notebooksForExport = appData.notebooks.map(notebook => ({
+        const notebooksForExport = client.notebooks.map(notebook => ({
             ...notebook,
             connections: Array.isArray(notebook.connections) 
                 ? notebook.connections.join(', ') 
@@ -308,8 +556,7 @@ function saveToExcel() {
         const notebooksWorksheet = XLSX.utils.json_to_sheet(notebooksForExport);
         XLSX.utils.book_append_sheet(workbook, notebooksWorksheet, 'Notebooks');
         
-        // Adicionar aba de impressoras - converter arrays para strings
-        const printersForExport = appData.printers.map(printer => ({
+        const printersForExport = client.printers.map(printer => ({
             ...printer,
             users: Array.isArray(printer.users) 
                 ? printer.users.join(', ') 
@@ -318,16 +565,16 @@ function saveToExcel() {
         const printersWorksheet = XLSX.utils.json_to_sheet(printersForExport);
         XLSX.utils.book_append_sheet(workbook, printersWorksheet, 'Impressoras');
         
-        // Adicionar aba do Anydesk
-        const anydeskWorksheet = XLSX.utils.json_to_sheet(appData.anydesk);
+        const anydeskWorksheet = XLSX.utils.json_to_sheet(client.anydesk);
         XLSX.utils.book_append_sheet(workbook, anydeskWorksheet, 'Anydesk');
+
+        // Adicionar aba de Anotações
+        const notesWorksheet = XLSX.utils.json_to_sheet(client.notes || []);
+        XLSX.utils.book_append_sheet(workbook, notesWorksheet, 'Anotações');
         
-        // Gerar nome do arquivo
-        const fileName = appData.company.name 
-            ? `Gerenciador_TI_${appData.company.name.replace(/\s+/g, '_')}.xlsx`
-            : 'Gerenciador_TI.xlsx';
+        // Nome do arquivo baseado no nome do cliente
+        const fileName = `${client.name.replace(/\s+/g, '_')}.xlsx`;
         
-        // Salvar arquivo
         XLSX.writeFile(workbook, fileName);
         alert('Arquivo salvo com sucesso!');
         
@@ -339,24 +586,28 @@ function saveToExcel() {
 
 // Formulário da empresa
 function updateCompanyData() {
-    appData.company = {
+    if (!currentClientId) return;
+    
+    clients[currentClientId].company = {
         name: elements.companyName.value,
-        logo: appData.company.logo, // Mantém o logo existente
+        logo: clients[currentClientId].company.logo,
         address: elements.companyAddress.value,
         contact: elements.companyContact.value
     };
     
     updateSaveButtonState();
-    saveToLocalStorage();
+    saveClientsToLocalStorage();
 }
 
 function handleLogoUpload(event) {
+    if (!currentClientId) return;
+    
     const file = event.target.files[0];
     if (file) {
         const reader = new FileReader();
         reader.onload = function(e) {
-            appData.company.logo = e.target.result;
-            saveToLocalStorage();
+            clients[currentClientId].company.logo = e.target.result;
+            saveClientsToLocalStorage();
         };
         reader.readAsDataURL(file);
     }
@@ -364,6 +615,11 @@ function handleLogoUpload(event) {
 
 // Formulário de credenciais
 function saveCredential() {
+    if (!currentClientId) {
+        alert('Nenhum cliente selecionado.');
+        return;
+    }
+    
     if (!validateCredentialForm()) return;
 
     const credential = {
@@ -377,10 +633,10 @@ function saveCredential() {
         createdAt: new Date().toISOString()
     };
 
-    appData.credentials.push(credential);
+    clients[currentClientId].credentials.push(credential);
     updateCredentialsTable();
     clearCredentialForm();
-    saveToLocalStorage();
+    saveClientsToLocalStorage();
     
     alert('Credencial salva com sucesso!');
 }
@@ -496,7 +752,7 @@ function editCredential(id) {
     elements.notesInput.value = credential.notes || '';
 
     // Remover a credencial da lista (será readicionada ao salvar)
-    appData.credentials = appData.credentials.filter(c => c.id !== id);
+    clients[currentClientId].credentials = clients[currentClientId].credentials.filter(c => c.id !== id);
     updateCredentialsTable();
     
     elements.saveCredentialBtn.scrollIntoView({ behavior: 'smooth' });
@@ -504,9 +760,9 @@ function editCredential(id) {
 
 function deleteCredential(id) {
     if (confirm('Tem certeza que deseja excluir esta credencial?')) {
-        appData.credentials = appData.credentials.filter(c => c.id !== id);
+        clients[currentClientId].credentials = clients[currentClientId].credentials.filter(c => c.id !== id);
         updateCredentialsTable();
-        saveToLocalStorage();
+        saveClientsToLocalStorage();
     }
 }
 
@@ -608,6 +864,11 @@ function useGeneratedPassword() {
 
 // Formulário de notebooks
 function saveNotebook() {
+    if (!currentClientId) {
+        alert('Nenhum cliente selecionado.');
+        return;
+    }
+    
     if (!validateNotebookForm()) return;
 
     const connections = Array.from(elements.notebookConnections)
@@ -624,10 +885,10 @@ function saveNotebook() {
         createdAt: new Date().toISOString()
     };
 
-    appData.notebooks.push(notebook);
+    clients[currentClientId].notebooks.push(notebook);
     updateNotebooksTable();
     clearNotebookForm();
-    saveToLocalStorage();
+    saveClientsToLocalStorage();
     
     // Adicionar usuário à lista de sugestões
     if (notebook.user && !appData.users.includes(notebook.user)) {
@@ -637,7 +898,7 @@ function saveNotebook() {
     // Atualizar lista de usuários no formulário do Anydesk
     updateUsersList();
     
-    alert('Notebook salvo com sucesso!');
+    alert('Notebook salva com sucesso!');
 }
 
 function validateNotebookForm() {
@@ -725,7 +986,7 @@ function editNotebook(id) {
     });
 
     // Remover o notebook da lista
-    appData.notebooks = appData.notebooks.filter(n => n.id !== id);
+    clients[currentClientId].notebooks = clients[currentClientId].notebooks.filter(n => n.id !== id);
     updateNotebooksTable();
     
     elements.saveNotebook.scrollIntoView({ behavior: 'smooth' });
@@ -733,14 +994,19 @@ function editNotebook(id) {
 
 function deleteNotebook(id) {
     if (confirm('Tem certeza que deseja excluir este notebook?')) {
-        appData.notebooks = appData.notebooks.filter(n => n.id !== id);
+        clients[currentClientId].notebooks = clients[currentClientId].notebooks.filter(n => n.id !== id);
         updateNotebooksTable();
-        saveToLocalStorage();
+        saveClientsToLocalStorage();
     }
 }
 
 // Formulário de impressoras
 function savePrinter() {
+    if (!currentClientId) {
+        alert('Nenhum cliente selecionado.');
+        return;
+    }
+    
     if (!validatePrinterForm()) return;
 
     const connection = document.querySelector('input[name="printer-connection"]:checked').value;
@@ -758,10 +1024,10 @@ function savePrinter() {
         createdAt: new Date().toISOString()
     };
 
-    appData.printers.push(printer);
+    clients[currentClientId].printers.push(printer);
     updatePrintersTable();
     clearPrinterForm();
-    saveToLocalStorage();
+    saveClientsToLocalStorage();
     
     // Adicionar usuários à lista de sugestões
     users.forEach(user => {
@@ -856,7 +1122,7 @@ function editPrinter(id) {
     printer.users.forEach(user => addUserTag(user));
 
     // Remover a impressora da lista
-    appData.printers = appData.printers.filter(p => p.id !== id);
+    clients[currentClientId].printers = clients[currentClientId].printers.filter(p => p.id !== id);
     updatePrintersTable();
     
     elements.savePrinter.scrollIntoView({ behavior: 'smooth' });
@@ -864,13 +1130,13 @@ function editPrinter(id) {
 
 function deletePrinter(id) {
     if (confirm('Tem certeza que deseja excluir esta impressora?')) {
-        appData.printers = appData.printers.filter(p => p.id !== id);
+        clients[currentClientId].printers = clients[currentClientId].printers.filter(p => p.id !== id);
         updatePrintersTable();
-        saveToLocalStorage();
+        saveClientsToLocalStorage();
     }
 }
 
-// Formulário do Anydesk - FUNÇÕES NOVAS E ATUALIZADAS
+// Formulário do Anydesk
 function formatAnydeskIp() {
     let value = elements.anydeskIp.value.replace(/\D/g, ''); // Remove tudo que não é número
     
@@ -908,6 +1174,11 @@ function getFormattedAnydeskId(anydeskIp) {
 }
 
 function saveAnydesk() {
+    if (!currentClientId) {
+        alert('Nenhum cliente selecionado.');
+        return;
+    }
+    
     if (!validateAnydeskForm()) return;
 
     const cleanIp = getCleanAnydeskId(elements.anydeskIp.value.trim());
@@ -921,10 +1192,10 @@ function saveAnydesk() {
         createdAt: new Date().toISOString()
     };
 
-    appData.anydesk.push(anydeskConfig);
+    clients[currentClientId].anydesk.push(anydeskConfig);
     updateAnydeskTable();
     clearAnydeskForm();
-    saveToLocalStorage();
+    saveClientsToLocalStorage();
     
     alert('Configuração do Anydesk salva com sucesso!');
 }
@@ -1015,7 +1286,7 @@ function editAnydesk(id) {
     elements.anydeskNotes.value = config.notes || '';
 
     // Remover a configuração da lista (será readicionada ao salvar)
-    appData.anydesk = appData.anydesk.filter(a => a.id !== id);
+    clients[currentClientId].anydesk = clients[currentClientId].anydesk.filter(a => a.id !== id);
     updateAnydeskTable();
     
     elements.saveAnydesk.scrollIntoView({ behavior: 'smooth' });
@@ -1023,9 +1294,9 @@ function editAnydesk(id) {
 
 function deleteAnydesk(id) {
     if (confirm('Tem certeza que deseja excluir esta configuração do Anydesk?')) {
-        appData.anydesk = appData.anydesk.filter(a => a.id !== id);
+        clients[currentClientId].anydesk = clients[currentClientId].anydesk.filter(a => a.id !== id);
         updateAnydeskTable();
-        saveToLocalStorage();
+        saveClientsToLocalStorage();
     }
 }
 
@@ -1126,6 +1397,239 @@ function handleTagInput(event) {
     }
 }
 
+// Funções para gerenciar anotações
+function saveNote() {
+    if (!currentClientId) {
+        alert('Nenhum cliente selecionado.');
+        return;
+    }
+    
+    if (!validateNoteForm()) return;
+
+    // Obter data e hora atual do computador
+    const now = new Date();
+    const formattedDate = formatDateTime(now);
+
+    const note = {
+        id: Date.now().toString(),
+        title: elements.noteTitle.value.trim(),
+        content: elements.noteContent.value.trim(),
+        category: elements.noteCategory.value || 'Outro',
+        createdAt: now.toISOString(),
+        formattedDate: formattedDate,
+        createdTimestamp: now.getTime()
+    };
+
+    // Inicializar array de anotações se não existir
+    if (!clients[currentClientId].notes) {
+        clients[currentClientId].notes = [];
+    }
+
+    clients[currentClientId].notes.unshift(note); // Adicionar no início para ordem decrescente
+    updateNotesTable();
+    clearNoteForm();
+    saveClientsToLocalStorage();
+    
+    alert('Anotação salva com sucesso!');
+}
+
+function validateNoteForm() {
+    const required = [
+        elements.noteTitle,
+        elements.noteContent
+    ];
+
+    for (let field of required) {
+        if (!field.value.trim()) {
+            alert(`Por favor, preencha o campo: ${field.previousElementSibling.textContent}`);
+            field.focus();
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function clearNoteForm() {
+    elements.noteTitle.value = '';
+    elements.noteContent.value = '';
+    elements.noteCategory.value = '';
+}
+
+function formatDateTime(date) {
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    
+    return `${day}/${month}/${year} ${hours}:${minutes}`;
+}
+
+function updateNotesTable() {
+    elements.notesList.innerHTML = '';
+
+    if (!appData.notes || appData.notes.length === 0) {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td colspan="5" style="text-align: center; color: #7f8c8d;">
+                <i class="fas fa-sticky-note" style="font-size: 2rem; margin-bottom: 0.5rem; display: block;"></i>
+                Nenhuma anotação cadastrada
+            </td>
+        `;
+        elements.notesList.appendChild(row);
+        return;
+    }
+
+    const filteredNotes = filterNotesData();
+
+    filteredNotes.forEach(note => {
+        const row = document.createElement('tr');
+        
+        // Conteúdo resumido para a tabela
+        const shortContent = note.content.length > 100 
+            ? note.content.substring(0, 100) + '...' 
+            : note.content;
+        
+        row.innerHTML = `
+            <td>${escapeHtml(note.formattedDate)}</td>
+            <td>${escapeHtml(note.title)}</td>
+            <td>
+                ${note.category ? `<span class="category-badge category-${note.category}">${note.category}</span>` : '-'}
+            </td>
+            <td class="note-content-cell" title="${escapeHtml(note.content)}">
+                ${escapeHtml(shortContent)}
+            </td>
+            <td>
+                <button class="action-btn view-note" data-id="${note.id}" title="Ver anotação completa">
+                    <i class="fas fa-eye"></i>
+                </button>
+                <button class="action-btn edit-note" data-id="${note.id}">
+                    <i class="fas fa-edit"></i>
+                </button>
+                <button class="action-btn delete-note" data-id="${note.id}">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </td>
+        `;
+
+        const viewBtn = row.querySelector('.view-note');
+        const editBtn = row.querySelector('.edit-note');
+        const deleteBtn = row.querySelector('.delete-note');
+
+        viewBtn.addEventListener('click', () => viewNote(note.id));
+        editBtn.addEventListener('click', () => editNote(note.id));
+        deleteBtn.addEventListener('click', () => deleteNote(note.id));
+
+        elements.notesList.appendChild(row);
+    });
+}
+
+function filterNotesData() {
+    if (!appData.notes) return [];
+    
+    let filtered = [...appData.notes];
+    
+    // Filtrar por categoria
+    const categoryFilter = elements.filterCategory.value;
+    if (categoryFilter) {
+        filtered = filtered.filter(note => note.category === categoryFilter);
+    }
+    
+    // Filtrar por busca textual
+    const searchText = elements.searchNotes.value.toLowerCase();
+    if (searchText) {
+        filtered = filtered.filter(note => 
+            note.title.toLowerCase().includes(searchText) ||
+            note.content.toLowerCase().includes(searchText) ||
+            (note.category && note.category.toLowerCase().includes(searchText))
+        );
+    }
+    
+    return filtered;
+}
+
+function filterNotes() {
+    updateNotesTable();
+}
+
+function viewNote(id) {
+    const note = appData.notes.find(n => n.id === id);
+    if (!note) return;
+
+    // Criar modal para visualização
+    const modal = document.createElement('div');
+    modal.className = 'modal active note-modal';
+    modal.innerHTML = `
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i class="fas fa-sticky-note"></i> Anotação</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="note-header">
+                    <div>
+                        <h4 class="note-title">${escapeHtml(note.title)}</h4>
+                        <div class="note-meta">
+                            <strong>Categoria:</strong> ${note.category || 'Sem categoria'} | 
+                            <strong>Data:</strong> ${note.formattedDate}
+                        </div>
+                    </div>
+                </div>
+                <div class="note-content">
+                    ${escapeHtml(note.content).replace(/\n/g, '<br>')}
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn primary" id="close-note-modal">
+                    <i class="fas fa-times"></i> Fechar
+                </button>
+            </div>
+        </div>
+    `;
+
+    // Event listeners do modal
+    const closeBtn = modal.querySelector('.modal-close');
+    const closeModalBtn = modal.querySelector('#close-note-modal');
+    
+    const closeModal = () => {
+        modal.remove();
+        document.body.classList.remove('modal-open');
+    };
+    
+    closeBtn.addEventListener('click', closeModal);
+    closeModalBtn.addEventListener('click', closeModal);
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) closeModal();
+    });
+
+    document.body.appendChild(modal);
+    document.body.classList.add('modal-open');
+}
+
+function editNote(id) {
+    const note = appData.notes.find(n => n.id === id);
+    if (!note) return;
+
+    elements.noteTitle.value = note.title;
+    elements.noteContent.value = note.content;
+    elements.noteCategory.value = note.category || '';
+
+    // Remover a anotação da lista (será readicionada ao salvar)
+    clients[currentClientId].notes = clients[currentClientId].notes.filter(n => n.id !== id);
+    updateNotesTable();
+    
+    elements.saveNote.scrollIntoView({ behavior: 'smooth' });
+}
+
+function deleteNote(id) {
+    if (confirm('Tem certeza que deseja excluir esta anotação?')) {
+        clients[currentClientId].notes = clients[currentClientId].notes.filter(n => n.id !== id);
+        updateNotesTable();
+        saveClientsToLocalStorage();
+    }
+}
+
 // Utilitários
 function escapeHtml(text) {
     const div = document.createElement('div');
@@ -1134,11 +1638,14 @@ function escapeHtml(text) {
 }
 
 function updateSaveButtonState() {
-    const hasData = appData.company.name || 
-                   appData.credentials.length > 0 || 
-                   appData.notebooks.length > 0 || 
-                   appData.printers.length > 0 ||
-                   appData.anydesk.length > 0;
+    const hasData = currentClientId && (
+        clients[currentClientId].company.name || 
+        clients[currentClientId].credentials.length > 0 || 
+        clients[currentClientId].notebooks.length > 0 || 
+        clients[currentClientId].printers.length > 0 ||
+        clients[currentClientId].anydesk.length > 0 ||
+        clients[currentClientId].notes.length > 0
+    );
     
     elements.saveBtn.disabled = !hasData;
 }
@@ -1154,6 +1661,7 @@ function updateUI() {
     updateNotebooksTable();
     updatePrintersTable();
     updateAnydeskTable();
+    updateNotesTable();
     
     // Atualizar lista de usuários
     updateUsersList();
@@ -1173,19 +1681,21 @@ function clearForms() {
     clearNotebookForm();
     clearPrinterForm();
     clearAnydeskForm();
+    clearNoteForm();
 }
 
 // Função para validar e corrigir dados ao carregar do localStorage
-function validateAndFixData(data) {
+function validateAndFixClientData(clientData) {
     // Garantir que todos os arrays existam
-    if (!data.credentials) data.credentials = [];
-    if (!data.notebooks) data.notebooks = [];
-    if (!data.printers) data.printers = [];
-    if (!data.users) data.users = [];
-    if (!data.anydesk) data.anydesk = [];
+    if (!clientData.credentials) clientData.credentials = [];
+    if (!clientData.notebooks) clientData.notebooks = [];
+    if (!clientData.printers) clientData.printers = [];
+    if (!clientData.users) clientData.users = [];
+    if (!clientData.anydesk) clientData.anydesk = [];
+    if (!clientData.notes) clientData.notes = [];
     
     // Validar e corrigir notebooks
-    data.notebooks = data.notebooks.map(notebook => ({
+    clientData.notebooks = clientData.notebooks.map(notebook => ({
         id: notebook.id || Date.now().toString(),
         user: notebook.user || '',
         brand: notebook.brand || '',
@@ -1198,7 +1708,7 @@ function validateAndFixData(data) {
     }));
     
     // Validar e corrigir impressoras
-    data.printers = data.printers.map(printer => ({
+    clientData.printers = clientData.printers.map(printer => ({
         id: printer.id || Date.now().toString(),
         name: printer.name || '',
         serial: printer.serial || '',
@@ -1212,7 +1722,7 @@ function validateAndFixData(data) {
     }));
     
     // Validar e corrigir anydesk
-    data.anydesk = data.anydesk.map(config => ({
+    clientData.anydesk = clientData.anydesk.map(config => ({
         id: config.id || Date.now().toString(),
         ip: config.ip || '',
         formattedIp: config.formattedIp || (config.ip ? getFormattedAnydeskId(config.ip) : ''),
@@ -1221,37 +1731,61 @@ function validateAndFixData(data) {
         createdAt: config.createdAt || new Date().toISOString()
     }));
     
-    return data;
+    // Validar e corrigir anotações
+    clientData.notes = clientData.notes.map(note => ({
+        id: note.id || Date.now().toString(),
+        title: note.title || '',
+        content: note.content || '',
+        category: note.category || 'Outro',
+        createdAt: note.createdAt || new Date().toISOString(),
+        formattedDate: note.formattedDate || formatDateTime(new Date(note.createdAt || Date.now())),
+        createdTimestamp: note.createdTimestamp || new Date(note.createdAt || Date.now()).getTime()
+    }));
+    
+    // Ordenar anotações por data (mais recente primeiro)
+    clientData.notes.sort((a, b) => b.createdTimestamp - a.createdTimestamp);
+    
+    return clientData;
 }
 
-// Local Storage
-function saveToLocalStorage() {
+// Local Storage para múltiplos clientes
+function saveClientsToLocalStorage() {
     try {
-        localStorage.setItem('tiManagerData', JSON.stringify(appData));
+        const dataToSave = {
+            clients: clients,
+            currentClientId: currentClientId
+        };
+        localStorage.setItem('tiManagerClients', JSON.stringify(dataToSave));
     } catch (error) {
-        console.error('Erro ao salvar no localStorage:', error);
+        console.error('Erro ao salvar clientes no localStorage:', error);
     }
 }
 
-function loadFromLocalStorage() {
+function loadClientsFromLocalStorage() {
     try {
-        const saved = localStorage.getItem('tiManagerData');
+        const saved = localStorage.getItem('tiManagerClients');
         if (saved) {
             const parsedData = JSON.parse(saved);
-            appData = validateAndFixData(parsedData);
-            updateUI();
+            clients = parsedData.clients || {};
+            currentClientId = parsedData.currentClientId;
+            
+            // Validar e corrigir dados de cada cliente
+            Object.keys(clients).forEach(clientId => {
+                clients[clientId] = validateAndFixClientData(clients[clientId]);
+            });
+            
+            updateClientsList();
+            
+            if (currentClientId && clients[currentClientId]) {
+                selectClient(currentClientId);
+            } else {
+                updateUI();
+            }
         }
     } catch (error) {
-        console.error('Erro ao carregar do localStorage:', error);
-        // Se houver erro, inicializa com dados vazios
-        appData = {
-            company: { name: '', logo: null, address: '', contact: '' },
-            credentials: [],
-            notebooks: [],
-            printers: [],
-            users: [],
-            anydesk: []
-        };
+        console.error('Erro ao carregar clientes do localStorage:', error);
+        clients = {};
+        currentClientId = null;
     }
 }
 
