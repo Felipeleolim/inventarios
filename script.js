@@ -1136,20 +1136,15 @@ function deletePrinter(id) {
     }
 }
 
-// Formulário do Anydesk
+// Formulário do Anydesk - ATUALIZADO
 function formatAnydeskIp() {
     let value = elements.anydeskIp.value.replace(/\D/g, ''); // Remove tudo que não é número
     
-    // Limita a 9 dígitos (formato do Anydesk)
-    if (value.length > 9) {
-        value = value.substring(0, 9);
-    }
-    
-    // Formata com espaços: 1 710 780 607
+    // Formata com espaços a cada 3 dígitos para melhor visualização
     if (value.length > 0) {
         let formatted = '';
         for (let i = 0; i < value.length; i++) {
-            if (i === 1 || i === 4 || i === 7) {
+            if (i > 0 && i % 3 === 0) {
                 formatted += ' ' + value[i];
             } else {
                 formatted += value[i];
@@ -1160,15 +1155,23 @@ function formatAnydeskIp() {
 }
 
 function getCleanAnydeskId(anydeskIp) {
-    // Remove espaços e formata para o padrão sem espaços
+    // Remove espaços e retorna apenas números
     return anydeskIp.replace(/\s/g, '');
 }
 
 function getFormattedAnydeskId(anydeskIp) {
-    // Formata para exibição: 1 710 780 607
+    // Formata para exibição com espaços a cada 3 dígitos
     const cleanId = getCleanAnydeskId(anydeskIp);
-    if (cleanId.length === 9) {
-        return `${cleanId[0]} ${cleanId.substring(1, 4)} ${cleanId.substring(4, 7)} ${cleanId.substring(7, 9)}`;
+    if (cleanId.length > 0) {
+        let formatted = '';
+        for (let i = 0; i < cleanId.length; i++) {
+            if (i > 0 && i % 3 === 0) {
+                formatted += ' ' + cleanId[i];
+            } else {
+                formatted += cleanId[i];
+            }
+        }
+        return formatted;
     }
     return cleanId;
 }
@@ -1214,11 +1217,18 @@ function validateAnydeskForm() {
         }
     }
 
-    // Validar formato do Anydesk ID (9 dígitos)
+    // VALIDAÇÃO ATUALIZADA: Aceita qualquer quantidade de dígitos, mas pelo menos 1
     const cleanIp = getCleanAnydeskId(elements.anydeskIp.value.trim());
-    const anydeskRegex = /^\d{9}$/;
+    const anydeskRegex = /^\d+$/; // Aceita um ou mais dígitos
     if (!anydeskRegex.test(cleanIp)) {
-        alert('Por favor, insira um ID Anydesk válido com 9 dígitos.');
+        alert('Por favor, insira apenas números no campo ID Anydesk.');
+        elements.anydeskIp.focus();
+        return false;
+    }
+
+    // Verifica se há pelo menos 1 dígito
+    if (cleanIp.length === 0) {
+        alert('Por favor, insira um ID Anydesk válido.');
         elements.anydeskIp.focus();
         return false;
     }
